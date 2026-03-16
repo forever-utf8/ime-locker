@@ -1,3 +1,5 @@
+using System.IO;
+using System.Threading;
 using System.Windows.Forms;
 using ImeLocker.Config;
 using ImeLocker.Core;

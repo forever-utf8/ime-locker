@@ -1,5 +1,6 @@
 namespace ImeLocker.Config;
 
+using System.Collections.Generic;
 using System.Globalization;
 using YamlDotNet.Serialization;
 

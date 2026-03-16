@@ -1,6 +1,8 @@
 namespace ImeLocker.Config;
 
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using Serilog;
 
 public static class ProcessScanner
