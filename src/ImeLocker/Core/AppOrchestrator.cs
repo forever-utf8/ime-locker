@@ -22,7 +22,7 @@ public sealed class AppOrchestrator : IDisposable
     private readonly System.Timers.Timer _cleanupTimer;
 
     // Events for UI
-    public event Action<WindowInfo, AppGroup?>? WindowSwitched; // fired after handling switch, with matched group
+    public event Action<WindowInfo, AppGroup?, ImeState?>? WindowSwitched; // fired after handling switch, with matched group and applied IME state
 
     public AppOrchestrator(WindowMonitor windowMonitor, ImeController imeController, ConfigManager configManager)
     {
@@ -65,28 +65,34 @@ public sealed class AppOrchestrator : IDisposable
         var switchMode = group?.Mode ?? _configManager.Config.DefaultMode;
 
         // 4. Apply IME state
+        ImeState? appliedState = null;
         switch (switchMode)
         {
             case SwitchMode.Preset:
                 var preset = group?.Preset ?? _configManager.Config.PresetIme;
-                var presetState = new ImeState(preset.GetKeyboardLayoutHandle(), preset.GetConversionModeFlag(), 0);
-                ApplyWithRetry(newWindow, presetState);
+                appliedState = new ImeState(preset.GetKeyboardLayoutHandle(), preset.GetConversionModeFlag(), 0);
+                await ApplyWithRetryAsync(newWindow, appliedState);
                 break;
 
             case SwitchMode.Remember:
                 if (_rememberedStates.TryGetValue(newWindow.ProcessName, out var remembered))
                 {
-                    ApplyWithRetry(newWindow, remembered);
+                    appliedState = remembered;
+                    await ApplyWithRetryAsync(newWindow, remembered);
                 }
-                // else: first time seeing this app, leave IME as-is
+                else
+                {
+                    // First time seeing this app — read current state for icon display
+                    appliedState = _imeController.GetState(newWindow.Hwnd, newWindow.ThreadId, newWindow.ProcessName);
+                }
                 break;
         }
 
         // 5. Notify UI
-        WindowSwitched?.Invoke(newWindow, group);
+        WindowSwitched?.Invoke(newWindow, group, appliedState);
     }
 
-    private void ApplyWithRetry(WindowInfo window, ImeState state, int maxRetries = 3)
+    private async Task ApplyWithRetryAsync(WindowInfo window, ImeState state, int maxRetries = 3)
     {
         for (int i = 0; i < maxRetries; i++)
         {
@@ -95,7 +101,7 @@ public sealed class AppOrchestrator : IDisposable
                 Log.Logger.Information("Applied IME state to {Process}: {@State} (attempt {Attempt})", window.ProcessName, state, i + 1);
                 return;
             }
-            Thread.Sleep(50);
+            await Task.Delay(50);
         }
         Log.Logger.Warning("Failed to apply IME state to {Process} after {Retries} attempts", window.ProcessName, maxRetries);
     }

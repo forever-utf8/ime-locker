@@ -7,35 +7,43 @@ Windows 11 输入法锁定工具。自动根据前台应用切换或记忆输入
 - **预设模式 (Preset)**：切换到指定应用时，自动设置为预设的键盘布局和输入模式（如编程工具自动切英文）
 - **记忆模式 (Remember)**：记住每个应用上次离开时的输入法状态，切回时自动恢复（如聊天工具保持中文）
 - **分组管理**：将应用按使用场景分组，每组独立配置切换策略
-- **系统托盘**：右键快速查看/切换当前应用所属分组，双击打开配置窗口
+- **系统托盘**：托盘图标实时显示当前输入法状态（英文 A / 中文 中），右键快速切换分组，双击打开配置窗口
+- **明暗主题适配**：托盘图标自动适配 Windows 明暗主题，主题切换时实时刷新
 - **热重载**：手动编辑 YAML 配置文件后即时生效，无需重启
 - **微信输入法兼容**：针对微信输入法的非标准行为提供专用适配器
 - **开机自启**：一键设置，开机后自动在后台运行
 
 ## 安装
 
+### 安装包（推荐）
+
+从 [Releases](https://github.com/forever-utf8/ime-locker/releases) 下载 `ImeLocker-Setup.exe`，运行安装向导即可。
+
+安装时可选：
+- 创建桌面快捷方式
+- 开机自启动
+
+### 卸载
+
+通过 Windows「设置 → 应用 → 已安装的应用」或控制面板卸载。卸载程序会自动清理：
+- 安装目录
+- `%APPDATA%\ImeLocker\`（配置和日志）
+- 注册表开机自启项
+
 ### 从源码编译
 
-需要 [.NET 9.0 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)。
+需要 [Podman](https://podman.io/)（Linux 容器化交叉编译）。
 
 ```bash
 git clone https://github.com/forever-utf8/ime-locker.git
 cd ime-locker
-dotnet publish src/ImeLocker/ImeLocker.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
-```
-
-输出文件位于 `src/ImeLocker/bin/Release/net9.0-windows/win-x64/publish/ImeLocker.exe`。
-
-### Linux 容器化交叉编译
-
-需要 [Podman](https://podman.io/)。
-
-```bash
-./build.sh                     # 默认 Release win-x64
+./build.sh                     # 编译 + 打包安装程序
 ./build.sh Release win-arm64   # ARM64 目标
 ```
 
-输出到 `publish/` 目录。
+产出：
+- `publish/` — 可执行文件及依赖 DLL
+- `output/ImeLocker-Setup.exe` — 安装包（Inno Setup 打包）
 
 ## 使用
 
@@ -100,6 +108,7 @@ groups:
 - .NET 9.0 (C#)、WPF + WinForms
 - Windows API: `SetWinEventHook`、`ImmSetConversionStatus`、`ActivateKeyboardLayout`
 - YamlDotNet、Serilog
+- Inno Setup（安装包打包）
 
 ## License
 

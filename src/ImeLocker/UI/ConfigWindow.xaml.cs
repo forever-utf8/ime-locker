@@ -12,7 +12,9 @@ public partial class ConfigWindow : Window
     public ConfigWindow(ConfigManager configManager)
     {
         InitializeComponent();
-        DataContext = new ConfigViewModel(configManager);
+        var vm = new ConfigViewModel(configManager);
+        vm.SaveCompleted += Hide;
+        DataContext = vm;
     }
 
     protected override void OnClosing(CancelEventArgs e)

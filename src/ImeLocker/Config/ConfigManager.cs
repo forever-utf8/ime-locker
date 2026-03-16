@@ -1,7 +1,9 @@
 namespace ImeLocker.Config;
 
 using System.IO;
+using System.Linq;
 using System.Threading;
+using System.Windows.Forms;
 using Serilog;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -43,7 +45,7 @@ public sealed class ConfigManager : IDisposable
     /// </summary>
     public AppGroup? FindGroup(string processName) =>
         Config.Groups.Find(g =>
-            g.Apps.Exists(a => a.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase)));
+            g.Apps.Any(a => a.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>Serialize and write config to disk.</summary>
     public void Save(AppConfig config)
@@ -114,35 +116,72 @@ public sealed class ConfigManager : IDisposable
         ConfigChanged?.Invoke();
     }
 
-    private static AppConfig CreateDefaultConfig() => new()
+    private static AppConfig CreateDefaultConfig()
     {
-        Version = 1,
-        DefaultMode = SwitchMode.Preset,
-        PresetIme = new ImePreset
+        var (defaultLayout, codeLayout) = PickDefaultLayouts();
+
+        return new AppConfig
         {
-            KeyboardLayout = "0x08040804",
-            ConversionMode = ConversionModePreset.Native,
-        },
-        Groups =
-        [
-            new AppGroup
+            Version = 1,
+            DefaultMode = SwitchMode.Remember,
+            PresetIme = new ImePreset
             {
-                Name = "English Apps",
-                Mode = SwitchMode.Preset,
-                Preset = new ImePreset
-                {
-                    KeyboardLayout = "0x04090409",
-                    ConversionMode = ConversionModePreset.Alphanumeric,
-                },
-                Apps =
-                [
-                    new AppEntry { ProcessName = "Code" },
-                    new AppEntry { ProcessName = "WindowsTerminal" },
-                    new AppEntry { ProcessName = "idea64" },
-                ],
+                KeyboardLayout = defaultLayout,
+                ConversionMode = ImePreset.IsImeLayout(defaultLayout)
+                    ? ConversionModePreset.Native
+                    : ConversionModePreset.Alphanumeric,
             },
-        ],
-    };
+            Groups =
+            [
+                new AppGroup
+                {
+                    Name = "Code",
+                    Mode = SwitchMode.Preset,
+                    Preset = new ImePreset
+                    {
+                        KeyboardLayout = codeLayout,
+                        ConversionMode = ConversionModePreset.Alphanumeric,
+                    },
+                    Apps =
+                    [
+                        new AppEntry { ProcessName = "Code" },
+                        new AppEntry { ProcessName = "WindowsTerminal" },
+                        new AppEntry { ProcessName = "idea64" },
+                    ],
+                },
+            ],
+        };
+    }
+
+    /// <summary>
+    /// Pick keyboard layouts from installed input languages.
+    /// Returns (defaultLayout for global preset, codeLayout for Code group).
+    /// Code group prefers English; global preset prefers CJK IME if available.
+    /// </summary>
+    private static (string DefaultLayout, string CodeLayout) PickDefaultLayouts()
+    {
+        var layouts = InputLanguage.InstalledInputLanguages
+            .Cast<InputLanguage>()
+            .Select(lang =>
+            {
+                var hkl = lang.Handle.ToInt64() & 0xFFFFFFFF;
+                return (Hex: $"0x{hkl:X8}", PrimaryLang: (int)(hkl & 0x3FF));
+            })
+            .ToList();
+
+        if (layouts.Count == 0)
+            return ("0x08040804", "0x04090409");
+
+        // English layout: primary language 0x09 (LANG_ENGLISH)
+        var english = layouts.FirstOrDefault(l => l.PrimaryLang == 0x09);
+        // CJK IME layout: Chinese(0x04) / Japanese(0x11) / Korean(0x12)
+        var cjk = layouts.FirstOrDefault(l => l.PrimaryLang is 0x04 or 0x11 or 0x12);
+
+        var codeLayout = english.Hex ?? layouts[0].Hex;
+        var defaultLayout = cjk.Hex ?? layouts[0].Hex;
+
+        return (defaultLayout, codeLayout);
+    }
 
     public void Dispose()
     {

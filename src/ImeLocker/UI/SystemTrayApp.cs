@@ -1,10 +1,12 @@
 namespace ImeLocker.UI;
 
+using System.Diagnostics;
 using System.Drawing;
-using System.Threading;
+using System.Linq;
 using System.Windows.Forms;
 using ImeLocker.Config;
 using ImeLocker.Core;
+using ImeLocker.Native;
 using Microsoft.Win32;
 
 /// <summary>
@@ -23,6 +25,7 @@ public sealed class SystemTrayApp : ApplicationContext
 
     private ContextMenuStrip _contextMenu = null!;
     private ToolStripMenuItem _autoStartItem = null!;
+    private ToolStripMenuItem _groupTitleItem = null!;
     private ConfigWindow? _configWindow;
 
     // Track current foreground window info for group assignment
@@ -37,7 +40,6 @@ public sealed class SystemTrayApp : ApplicationContext
 
         _notifyIcon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
             Visible = true,
             Text = "ImeLocker",
         };
@@ -46,9 +48,11 @@ public sealed class SystemTrayApp : ApplicationContext
         BuildContextMenu();
         _notifyIcon.ContextMenuStrip = _contextMenu;
         _notifyIcon.DoubleClick += (_, _) => OpenConfigWindow();
+        _notifyIcon.MouseMove += (_, _) => CaptureCurrentForeground();
 
         _orchestrator.WindowSwitched += OnWindowSwitched;
         _configManager.ConfigChanged += OnConfigChanged;
+        SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
     }
 
     private void BuildContextMenu()
@@ -62,7 +66,9 @@ public sealed class SystemTrayApp : ApplicationContext
 
         _contextMenu.Items.Add(new ToolStripSeparator());
 
-        // Dynamic group items will be rebuilt on menu opening
+        // Dynamic title + group items, rebuilt on menu opening
+        _groupTitleItem = new ToolStripMenuItem { Enabled = false };
+        _contextMenu.Items.Add(_groupTitleItem);
         _contextMenu.Opening += (_, _) => RebuildGroupItems();
 
         _contextMenu.Items.Add(new ToolStripSeparator());
@@ -88,20 +94,23 @@ public sealed class SystemTrayApp : ApplicationContext
 
     /// <summary>
     /// Rebuild the dynamic group section of the context menu each time it opens.
-    /// Items between the two separators (index 1 and the separator before autostart) are dynamic.
+    /// Layout: [配置...][sep][title][...groups...][新建分组...][sep][开机自启][退出]
+    /// Title and groups are rebuilt; title is at index 2 (static slot), groups start at 3.
     /// </summary>
     private void RebuildGroupItems()
     {
-        // Remove old dynamic items: everything between index 2 and the second separator
-        // Layout: [配置...][sep][...dynamic...][sep][开机自启][退出]
-        // We keep first 2 items (配置, sep) and last 3 items (sep, 开机自启, 退出)
-        while (_contextMenu.Items.Count > 5)
+        _groupTitleItem.Text = _currentProcessName is not null
+            ? $"为 {ProcessDisplayNames.Get(_currentProcessName)} 切换方案"
+            : "切换方案";
+
+        // Remove old dynamic items after the title (index 3) up to the second separator
+        // Static items: [配置...][sep][title]...[sep][开机自启][退出] = keep first 3 + last 3
+        while (_contextMenu.Items.Count > 6)
         {
-            _contextMenu.Items.RemoveAt(2);
+            _contextMenu.Items.RemoveAt(3);
         }
 
-        // Insert group items at index 2
-        int insertIndex = 2;
+        int insertIndex = 3;
         foreach (var group in _configManager.Config.Groups)
         {
             var groupItem = new ToolStripMenuItem(group.Name)
@@ -124,10 +133,11 @@ public sealed class SystemTrayApp : ApplicationContext
         if (sender is not ToolStripMenuItem { Tag: AppGroup targetGroup } || _currentProcessName is null)
             return;
 
-        // Remove current process from any existing group
+        // Remove process from any existing group
         foreach (var g in _configManager.Config.Groups)
         {
-            g.Apps.RemoveAll(a => a.ProcessName.Equals(_currentProcessName, StringComparison.OrdinalIgnoreCase));
+            foreach (var a in g.Apps.Where(a => a.ProcessName.Equals(_currentProcessName, StringComparison.OrdinalIgnoreCase)).ToList())
+                g.Apps.Remove(a);
         }
 
         // Add to target group
@@ -155,7 +165,8 @@ public sealed class SystemTrayApp : ApplicationContext
         // Remove from existing groups
         foreach (var g in _configManager.Config.Groups)
         {
-            g.Apps.RemoveAll(a => a.ProcessName.Equals(_currentProcessName, StringComparison.OrdinalIgnoreCase));
+            foreach (var a in g.Apps.Where(a => a.ProcessName.Equals(_currentProcessName, StringComparison.OrdinalIgnoreCase)).ToList())
+                g.Apps.Remove(a);
         }
 
         _configManager.Config.Groups.Add(newGroup);
@@ -189,14 +200,43 @@ public sealed class SystemTrayApp : ApplicationContext
         return form.ShowDialog() == DialogResult.OK ? textBox.Text : null;
     }
 
-    private void OnWindowSwitched(WindowInfo window, AppGroup? group)
+    /// <summary>
+    /// Capture the foreground process when the mouse hovers over the tray icon.
+    /// At this point the foreground window hasn't changed, so it's reliable.
+    /// </summary>
+    private void CaptureCurrentForeground()
+    {
+        var hwnd = User32.GetForegroundWindow();
+        if (hwnd == 0) return;
+        User32.GetWindowThreadProcessId(hwnd, out uint pid);
+        if (pid == 0) return;
+        try
+        {
+            using var p = Process.GetProcessById((int)pid);
+            _currentProcessName = p.ProcessName;
+            _currentGroup = _configManager.FindGroup(_currentProcessName);
+            ProcessDisplayNames.ResolveFromPid(pid, _currentProcessName);
+        }
+        catch
+        {
+            // Process may have exited
+        }
+    }
+
+    private void OnWindowSwitched(WindowInfo window, AppGroup? group, ImeState? imeState)
     {
         _syncContext.Post(_ =>
         {
-            _currentProcessName = window.ProcessName;
-            _currentGroup = group;
-            _trayIconManager.UpdateStatus(window.ProcessName, group?.Name);
+            _trayIconManager.UpdateStatus(window.ProcessName, group?.Name, imeState);
         }, null);
+    }
+
+    private void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
+    {
+        if (e.Category == UserPreferenceCategory.General)
+        {
+            _syncContext.Post(_ => _trayIconManager.RegenerateIcons(), null);
+        }
     }
 
     private void OnConfigChanged()
@@ -248,6 +288,8 @@ public sealed class SystemTrayApp : ApplicationContext
         {
             _orchestrator.WindowSwitched -= OnWindowSwitched;
             _configManager.ConfigChanged -= OnConfigChanged;
+            SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+            _trayIconManager.Dispose();
             _notifyIcon.Visible = false;
             _notifyIcon.Dispose();
             _contextMenu.Dispose();
