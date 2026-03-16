@@ -3,10 +3,12 @@ namespace ImeLocker.UI;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
+using ImeLocker.Native;
 using Microsoft.Win32;
 
 /// <summary>
-/// Generates tray icons dynamically using GDI+, adapting to system theme.
+/// Generates the tray icon dynamically using GDI+, adapting to system theme.
+/// Design: "IM" text with a padlock overlay at bottom-right.
 /// </summary>
 internal static class TrayIconGenerator
 {
@@ -20,47 +22,21 @@ internal static class TrayIconGenerator
         {
             using var key = Registry.CurrentUser.OpenSubKey(
                 @"SOFTWARE\Microsoft\Windows\CurrentVersion\Themes\Personalize", false);
-            // SystemUsesLightTheme: 0 = dark, 1 = light
             var value = key?.GetValue("SystemUsesLightTheme");
             return value is int i && i == 0;
         }
         catch
         {
-            return true; // default to dark theme
+            return true;
         }
     }
 
-    /// <summary>Create the idle/default icon with "IM" text and a lock indicator.</summary>
-    public static Icon CreateIdleIcon()
-    {
-        return CreateTextIcon("IM", null);
-    }
-
-    /// <summary>Create icon for English input mode.</summary>
-    public static Icon CreateEnglishIcon()
-    {
-        return CreateTextIcon("A", CreateAccentColor(isEnglish: true));
-    }
-
-    /// <summary>Create icon for Chinese input mode.</summary>
-    public static Icon CreateChineseIcon()
-    {
-        return CreateTextIcon("中", CreateAccentColor(isEnglish: false));
-    }
-
-    private static Color CreateAccentColor(bool isEnglish)
-    {
-        // English: blue accent, Chinese: orange accent
-        return isEnglish
-            ? Color.FromArgb(180, 80, 160, 255)
-            : Color.FromArgb(180, 255, 140, 50);
-    }
-
-    private static Icon CreateTextIcon(string text, Color? accentColor)
+    /// <summary>Create the tray icon with "IM" text and lock indicator.</summary>
+    public static Icon CreateIcon()
     {
         bool dark = IsDarkTheme();
         var foreground = dark ? Color.White : Color.FromArgb(30, 30, 30);
-        var accent = accentColor ?? (dark ? Color.FromArgb(120, 255, 255, 255) : Color.FromArgb(120, 30, 30, 30));
+        var accent = dark ? Color.FromArgb(120, 255, 255, 255) : Color.FromArgb(120, 30, 30, 30);
 
         using var bitmap = new Bitmap(IconSize, IconSize);
         bitmap.SetResolution(96, 96);
@@ -70,30 +46,28 @@ internal static class TrayIconGenerator
         g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
         g.Clear(Color.Transparent);
 
-        // Draw main text — large, positioned top-left to allow lock overlay at bottom-right
-        var fontSize = text == "IM" ? 15f : 28f;
-        using var font = new Font("Segoe UI", fontSize, FontStyle.Bold, GraphicsUnit.Pixel);
+        // "IM" text offset toward top-left to leave room for lock
+        using var font = new Font("Segoe UI", 15f, FontStyle.Bold, GraphicsUnit.Pixel);
         using var brush = new SolidBrush(foreground);
-
-        var textSize = g.MeasureString(text, font);
-        // Offset toward top-left so text and lock overlap naturally
+        var textSize = g.MeasureString("IM", font);
         var x = (IconSize - textSize.Width) / 2f - 2f;
         var y = (IconSize - textSize.Height) / 2f - 3f;
-        g.DrawString(text, font, brush, x, y);
+        g.DrawString("IM", font, brush, x, y);
 
-        // Draw lock indicator at bottom-right, overlapping the text
+        // Lock indicator at bottom-right
         DrawLockIndicator(g, accent, foreground);
 
-        // Convert bitmap to icon
-        var hIcon = bitmap.GetHicon();
-        return Icon.FromHandle(hIcon);
+        nint hIcon = bitmap.GetHicon();
+        using var temp = Icon.FromHandle(hIcon);
+        var owned = (Icon)temp.Clone();
+        User32.DestroyIcon(hIcon);
+        return owned;
     }
 
-    /// <summary>Draw a padlock at the bottom-right, rendered on top of text.</summary>
     private static void DrawLockIndicator(Graphics g, Color accentColor, Color foreground)
     {
-        const float ox = IconSize - LockSize;     // x origin
-        const float oy = IconSize - LockSize;     // y origin
+        const float ox = IconSize - LockSize;
+        const float oy = IconSize - LockSize;
         const float bodyH = 9f;
         const float bodyW = LockSize - 2f;
         const float bodyY = oy + LockSize - bodyH;
@@ -101,17 +75,13 @@ internal static class TrayIconGenerator
         const float shackleW = 8f;
         const float shackleH = 8f;
 
-        // Clear background behind the lock so it stands out over text
-        // Use a slightly larger region for clean overlap
-        using var bgBrush = new SolidBrush(Color.FromArgb(200, 0, 0, 0));
-
-        // Shackle (U-shape arc)
+        // Shackle arc
         float shackleX = bodyX + (bodyW - shackleW) / 2f;
         float shackleY = bodyY - shackleH / 2f;
         using var pen = new Pen(foreground, 2.2f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
         g.DrawArc(pen, shackleX, shackleY, shackleW, shackleH, 180, 180);
 
-        // Lock body (filled rounded rect)
+        // Lock body
         using var bodyBrush = new SolidBrush(accentColor);
         var bodyRect = new RectangleF(bodyX, bodyY, bodyW, bodyH);
         using var bodyPath = RoundedRect(bodyRect, 2f);

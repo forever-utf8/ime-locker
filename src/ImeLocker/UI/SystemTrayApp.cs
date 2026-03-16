@@ -227,7 +227,7 @@ public sealed class SystemTrayApp : ApplicationContext
     {
         _syncContext.Post(_ =>
         {
-            _trayIconManager.UpdateStatus(window.ProcessName, group?.Name, imeState);
+            _trayIconManager.UpdateTooltip(window.ProcessName, group?.Name);
         }, null);
     }
 
@@ -235,7 +235,7 @@ public sealed class SystemTrayApp : ApplicationContext
     {
         if (e.Category == UserPreferenceCategory.General)
         {
-            _syncContext.Post(_ => _trayIconManager.RegenerateIcons(), null);
+            _syncContext.Post(_ => _trayIconManager.RegenerateIcon(), null);
         }
     }
 

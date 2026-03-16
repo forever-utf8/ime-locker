@@ -52,7 +52,7 @@
                                 <Setter Property="Text" Value="激活窗口时切换为下列预设"/>
                                 <Style.Triggers>
                                     <DataTrigger Binding="{Binding DefaultMode}" Value="{x:Static config:SwitchMode.Remember}">
-                                        <Setter Property="Text" Value="激活窗口，切换为退出时的输入法"/>
+                                        <Setter Property="Text" Value="激活窗口，切换为离开时的输入法"/>
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>

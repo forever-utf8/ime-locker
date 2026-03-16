@@ -6,3 +6,6 @@ obj/
 *.log
 .idea/
 publish/
+output/
+
+memory/
